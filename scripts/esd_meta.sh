@@ -10,4 +10,5 @@ python ./esd_meta.py \
     --num_train_steps 1500 \
     --finetuning_method full \
     --gamma1 0.1 \
-    --gamma2 0.001
+    --gamma2 0.001 #\
+    # --fix_timesteps True

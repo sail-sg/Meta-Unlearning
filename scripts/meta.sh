@@ -9,4 +9,5 @@ python ./meta.py \
     --finetuning_method full \
     --learning_rate 1e-05 \
     --gamma1 0.1 \
-    --gamma2 0.001
+    --gamma2 0.001 #\
+    # --fix_timesteps True

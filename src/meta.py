@@ -125,6 +125,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adam_epsilon", type=float, default=1e-8,)
     parser.add_argument("--weight_decay", type=float, default=1e-4,)
     parser.add_argument("--max_grad_norm", type=float, default=1.0,)
+    parser.add_argument("--fix_timesteps", type=bool, default=False)
+    parser.add_argument("--fixed_time_step", type=int, default=5)
 
     parser.add_argument("--allow_tf32", action="store_true",
         help="Allow the use of TF32. Only works on certain GPUs.")
@@ -657,16 +659,18 @@ def train_unlearn_step(
     return loss
 
 
-def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=False):
+def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=False)
     for step, batch in enumerate(dataloader):
-        with torch.amp.autocast(device_type="cuda"):
             latents = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
 
             noise = torch.randn_like(latents)
 
             bsz = latents.shape[0]
-            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
+            if args.fix_timesteps and not train_set:
+                timesteps = torch.zeros(bsz, dtype=torch.long, device=latents.device) * args.fixed_time_step
+            else:
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
             
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 

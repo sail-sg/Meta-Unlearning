@@ -1,4 +1,4 @@
-python 。/sdd_meta.py \
+python ./sdd_meta.py \
     --pretrained_model_name_or_path "CompVis/stable-diffusion-v1-4" \
     --removing_concepts \
         "nudity" \
@@ -10,4 +10,5 @@ python 。/sdd_meta.py \
     --num_train_steps 1500 \
     --finetuning_method full \
     --gamma1 0.1 \
-    --gamma2 0.001
+    --gamma2 0.001 #\
+    # --fix_timesteps True

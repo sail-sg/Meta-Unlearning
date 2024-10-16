@@ -107,6 +107,8 @@ def parse_args() -> argparse.Namespace:
         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--ema_decay", type=float, default=0.999,
         help="The decay rate for the exponential moving average model.")
+    parser.add_argument("--fix_timesteps", type=bool, default=False)
+    parser.add_argument("--fixed_time_step", type=int, default=5)
 
     parser.add_argument("--learning_rate", type=float, default=1e-5,
         help="The initial learning rate (after warmup) to use.")
@@ -561,7 +563,7 @@ def train_unlearn_step(
 
 
 
-def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=False):
+def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=False)
     for step, batch in enumerate(dataloader):
             latents = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
@@ -569,7 +571,10 @@ def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_en
             noise = torch.randn_like(latents)
 
             bsz = latents.shape[0]
-            timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
+            if args.fix_timesteps and not train_set:
+                timesteps = torch.zeros(bsz, dtype=torch.long, device=latents.device) * args.fixed_time_step
+            else:
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
             
             noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
 
