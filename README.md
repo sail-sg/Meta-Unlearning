@@ -52,5 +52,3 @@ Note that you should change the model path to your unlearned model.
 ## Acknowledgments
 
 This repository is based on the codebase of the [SDD](https://github.com/nannullna/safe-diffusion/tree/main). Thanks for their impressive works!
-
-# Meta-Unlearning
