@@ -17,7 +17,7 @@ pip install --upgrade diffusers[torch]
 ## Generate images datasets
 First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, the **irt** dataset means the retain dataset, and the **target** dataset means the concept related to unlearned concept. 
 
-Here is the exmaple generate scipt, you can change the text prompt according to your goal.
+Here is the examples of image generation Scripts, you can change the text prompt according to your goal.
 ```shell
 bash scripts/gen_images.sh
 ```
@@ -40,7 +40,7 @@ For ESD and SDD based meta-unlearning:
 bash scripts/esd_meta.sh
 bash scripts/sdd_meta.sh
 ```
-Note that we only give the example hyperparameter in code and you should change the hyperparameter refer to our paper. 
+Note that we only give default hyperparameters in code and you should change the hyperparameters refer to our paper. 
 
 For UCE and RECE based meta-unlearning:
 
