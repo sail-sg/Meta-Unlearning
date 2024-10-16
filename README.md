@@ -17,7 +17,7 @@ pip install --upgrade diffusers[torch]
 ## Generate images datasets
 First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, the **irt** dataset means the retain dataset, and the **target** dataset means the concept related to unlearned concept. 
 
-Here is the examples of image generation Scripts, you can change the text prompt according to your goal.
+Here is the example of image generation scripts, you can change the text prompt according to your goal.
 ```shell
 bash scripts/gen_images.sh
 ```
