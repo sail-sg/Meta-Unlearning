@@ -40,7 +40,7 @@ For ESD and SDD based meta-unlearning:
 bash scripts/esd_meta.sh
 bash scripts/sdd_meta.sh
 ```
-Note that you should change the hyperparameter refer to our paper. 
+Note that we only give the example hyperparameter in code and you should change the hyperparameter refer to our paper. 
 
 For UCE and RECE based meta-unlearning:
 
