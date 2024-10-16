@@ -19,7 +19,7 @@ First you can use the shell scripts to generate **hrm** dataset, **irt** dataset
 
 Here is the exmaple generate scipt, you can change the text prompt according to your goal.
 ```shell
-bash scripts/tofu/me_gd.sh
+bash scripts/gen_images.sh
 ```
 
 ## Baseline: unlearning
