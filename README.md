@@ -1,6 +1,6 @@
 # Meta-Unlearning on Diffusion Models: Preventing Relearning Unlearned Concepts
 
-This repository is the official implementation for the paper: [Meta-Unlearning on Diffusion Models:Preventing Relearning Unlearned Concepts]()
+This repository is the official implementation for the paper: [Meta-Unlearning on Diffusion Models:Preventing Relearning Unlearned Concepts](https://arxiv.org/pdf/2410.12777)
 
 ## Installation
 
