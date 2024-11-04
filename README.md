@@ -1,6 +1,6 @@
 # Meta-Unlearning on Diffusion Models: Preventing Relearning Unlearned Concepts
 
-This repository is the official implementation for the paper: [Meta-Unlearning on Diffusion Models:Preventing Relearning Unlearned Concepts]()
+This repository is the official implementation for the paper: [Meta-Unlearning on Diffusion Models:Preventing Relearning Unlearned Concepts](https://arxiv.org/pdf/2410.12777)
 
 ## Installation
 
@@ -15,9 +15,9 @@ pip install --upgrade diffusers[torch]
 *All experiments are conducted on NVIDIA A100 GPUs with 80GB of memory.*
 
 ## Generate images datasets
-First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, both the **irt** and **target** dataset are retain data. **irt** dataset means the concept unrelated to unlearned concept, and the **target** dataset means the concept related to unlearned concept. 
+First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, the **irt** dataset means the retain dataset, and the **target** dataset means the concept related to unlearned concept. 
 
-Here is the exmaple generate scipt, you can change the text prompt according to your goal.
+Here is the example of image generation scripts, you can change the text prompt according to your goal.
 ```shell
 bash scripts/gen_images.sh
 ```
@@ -40,7 +40,7 @@ For ESD and SDD based meta-unlearning:
 bash scripts/esd_meta.sh
 bash scripts/sdd_meta.sh
 ```
-Note that we only give the example hyperparameter in code and you should change the hyperparameter refer to our paper. 
+Note that we only give default hyperparameters in code and you should change the hyperparameters refer to our paper. 
 
 For UCE and RECE based meta-unlearning:
 
