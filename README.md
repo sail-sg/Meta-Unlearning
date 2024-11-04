@@ -15,7 +15,7 @@ pip install --upgrade diffusers[torch]
 *All experiments are conducted on NVIDIA A100 GPUs with 80GB of memory.*
 
 ## Generate images datasets
-First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, the **irt** dataset means the retain dataset, and the **target** dataset means the concept related to unlearned concept. 
+First you can use the shell scripts to generate **hrm** dataset, **irt** dataset and **target** dataset. In our code, the **hrm** dataset means the unlearned concept, both the **irt** and **target** dataset are retain data. **irt** dataset means the concept unrelated to unlearned concept, and the **target** dataset means the concept related to unlearned concept. 
 
 Here is the exmaple generate scipt, you can change the text prompt according to your goal.
 ```shell

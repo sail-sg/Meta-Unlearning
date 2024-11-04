@@ -9,6 +9,10 @@ python ./sdd_meta.py \
     --devices 0 0 \
     --num_train_steps 1500 \
     --finetuning_method full \
-    --gamma1 0.1 \
-    --gamma2 0.001 #\
-    # --fix_timesteps True
+    --gamma1_1 0.1 \
+    --gamma1_2 0.01 \
+    --gamma2_1 0.1 \
+    --gamma2_1 0.1 \
+    --gamma2_1 0.01 \
+    --fix_timesteps True \
+    --fixed_time_steps 1 2 5 10

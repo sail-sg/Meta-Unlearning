@@ -108,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ema_decay", type=float, default=0.999,
         help="The decay rate for the exponential moving average model.")
     parser.add_argument("--fix_timesteps", type=bool, default=False)
-    parser.add_argument("--fixed_time_step", type=int, default=5)
+    parser.add_argument("--fixed_time_steps", type=list, default=[1,2,5,10])
 
     parser.add_argument("--learning_rate", type=float, default=1e-5,
         help="The initial learning rate (after warmup) to use.")
@@ -124,8 +124,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adam_epsilon", type=float, default=1e-8,)
     parser.add_argument("--weight_decay", type=float, default=1e-4,)
     parser.add_argument("--max_grad_norm", type=float, default=1.0,)
-    parser.add_argument("--gamma1", type=float, default=1.0,)
-    parser.add_argument("--gamma2", type=float, default=1.0,)
+    parser.add_argument("--gamma1_1", type=float, default=1.0,)
+    parser.add_argument("--gamma1_2", type=float, default=1.0,)
+    parser.add_argument("--gamma2_1", type=float, default=1.0,)
+    parser.add_argument("--gamma2_2", type=float, default=1.0,)
+    parser.add_argument("--gamma2_3", type=float, default=1.0,)
 
     parser.add_argument("--allow_tf32", action="store_true",
         help="Allow the use of TF32. Only works on certain GPUs.")
@@ -931,21 +934,70 @@ def main():
 
             train_loss.backward()
 
+            if args.fix_timesteps:
+                for fixed_time_step in args.fixed_time_steps:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] += args.gamma1_1*param.grad
+                    task_optimizer.zero_grad()
+
+                for fixed_time_step in args.fixed_time_steps:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] += args.gamma1_2*param.grad
+                    task_optimizer.zero_grad()
+            else:
+                task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                for i, param in enumerate(parameters_copy):
+                    sum_grads[i] += args.gamma1_1*param.grad
+                task_optimizer.zero_grad()
+
+                task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                for i, param in enumerate(parameters_copy):
+                    sum_grads[i] += args.gamma1_2*param.grad
+                task_optimizer.zero_grad()
+
             for epoch in range(1):
                 
                 task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_train_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=True)
                 task_optimizer.zero_grad()
             
-                task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
-                for i, param in enumerate(parameters_copy):
-                    sum_grads[i] -= args.gamma1*param.grad
-                task_optimizer.zero_grad()
+                if args.fix_timesteps:
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_1*param.grad
+                        task_optimizer.zero_grad()
 
-                task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
-                for i, param in enumerate(parameters_copy):
-                    sum_grads[i] -= args.gamma2*param.grad
-                task_optimizer.zero_grad()
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_2*param.grad
+                        task_optimizer.zero_grad()
 
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_3*param.grad
+                        task_optimizer.zero_grad()
+
+                else:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_1*param.grad
+                    task_optimizer.zero_grad()
+
+
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_2*param.grad
+                    task_optimizer.zero_grad()
+
+
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_3*param.grad
+                    task_optimizer.zero_grad()
             # Apply accumulated gradients to the main model
             for i, param in enumerate(parameters):
                 param.grad += sum_grads[i]

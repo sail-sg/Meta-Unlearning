@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
         help="Log the training loss every `--log_every` steps.")
     parser.add_argument("--eval_every", type=int, default=1000,
         help="Evaluate the model every `--eval_every` steps.")
-    parser.add_argument("--save_every", type=int, default=50,
+    parser.add_argument("--save_every", type=int, default=100,
         help="Save the model every `--save_every` steps.")
     parser.add_argument("--eval_after", type=int, default=0,
         help="Evaluate the model after `--eval_after` steps.")
@@ -86,6 +86,13 @@ def parse_args() -> argparse.Namespace:
         help="Evaluate the model at the beginning.")
     parser.add_argument("--max_checkpoints", type=int, default=5,
         help="The maximum number of checkpoints to keep.")
+
+    parser.add_argument("--gamma1_1", type=float, default=1.0,)
+    parser.add_argument("--gamma1_2", type=float, default=1.0,)
+    parser.add_argument("--gamma2_1", type=float, default=1.0,)
+    parser.add_argument("--gamma2_2", type=float, default=1.0,)
+    parser.add_argument("--gamma2_3", type=float, default=1.0,)
+    
     
     parser.add_argument("--seed", type=int, default=None, required=False,
         help="A seed for reproducible training.")
@@ -107,9 +114,8 @@ def parse_args() -> argparse.Namespace:
         help="Number of updates steps to accumulate before performing a backward/update pass.")
     parser.add_argument("--ema_decay", type=float, default=0.999,
         help="The decay rate for the exponential moving average model.")
-
-    parser.add_argument("--gamma1", type=float, default=1.0,)
-    parser.add_argument("--gamma2", type=float, default=1.0,)
+    parser.add_argument("--fix_timesteps", type=bool, default=False)
+    parser.add_argument("--fixed_time_steps", type=list, default=[1,2,5,10])
 
     parser.add_argument("--learning_rate", type=float, default=1e-5,
         help="The initial learning rate (after warmup) to use.")
@@ -125,8 +131,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adam_epsilon", type=float, default=1e-8,)
     parser.add_argument("--weight_decay", type=float, default=1e-4,)
     parser.add_argument("--max_grad_norm", type=float, default=1.0,)
-    parser.add_argument("--fix_timesteps", type=bool, default=False)
-    parser.add_argument("--fixed_time_step", type=int, default=5)
 
     parser.add_argument("--allow_tf32", action="store_true",
         help="Allow the use of TF32. Only works on certain GPUs.")
@@ -497,84 +501,6 @@ def sample_until(
 
     return latents
 
-def train_retain_step(
-    args: argparse.Namespace,
-    prompt: str,
-    removing_prompt: str,
-    generator: torch.Generator,
-    noise_scheduler: DDPMScheduler,
-    ddim_scheduler: DDIMScheduler,
-    text_encoder: CLIPTextModel,
-    tokenizer: CLIPTokenizer,
-    unet_teacher: UNet2DConditionModel,
-    unet_student: UNet2DConditionModel,
-    devices: List[torch.device],
-) -> torch.Tensor:
-    """Train the model a single step for a given prompt and return the loss."""
-
-    unet_student.train()
-
-    # Encode prompt
-    prompt_embeds = encode_prompt(
-        prompt=prompt, 
-        removing_prompt=removing_prompt,
-        text_encoder=text_encoder, 
-        tokenizer=tokenizer,
-        device=devices[1],
-    )
-    
-    uncond_emb, cond_emb, safety_emb = torch.chunk(prompt_embeds, 3, dim=0)
-    batch_size = cond_emb.shape[0]
-
-    # Prepare timesteps
-    noise_scheduler.set_timesteps(args.num_ddpm_steps, devices[1])
-
-    # Prepare latent codes to generate z_t
-    latent_shape = (batch_size, unet_teacher.config.in_channels, 64, 64)
-    latents = torch.randn(latent_shape, generator=generator, device=devices[0])
-    # Scale the initial noise by the standard deviation required by the scheduler
-    latents = latents * ddim_scheduler.init_noise_sigma # z_T
-
-    # Normally, DDPM takes 1,000 timesteps for training, and DDIM takes 50 timesteps for inference.
-    t_ddim = torch.randint(0, args.num_ddim_steps, (1,))
-    t_ddpm_start = round((1 - (int(t_ddim) + 1) / args.num_ddim_steps) * args.num_ddpm_steps)
-    t_ddpm_end   = round((1 - int(t_ddim)       / args.num_ddim_steps) * args.num_ddpm_steps)
-    t_ddpm = torch.randint(t_ddpm_start, t_ddpm_end, (batch_size,),)
-    # print(f"t_ddim: {t_ddim}, t_ddpm: {t_ddpm}")
-
-    # Prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
-    extra_step_kwargs = prepare_extra_step_kwargs(noise_scheduler, generator, args.eta)
-
-    with torch.no_grad():
-        # args.guidance_scale: s_g in the paper
-        prompt_embeds = torch.cat([uncond_emb, cond_emb], dim=0) if args.guidance_scale > 1.0 else uncond_emb
-        prompt_embeds = prompt_embeds.to(unet_student.device)
-
-        # Generate latents
-        latents = sample_until(
-            until=int(t_ddim),
-            latents=latents,
-            unet=unet_student,
-            scheduler=ddim_scheduler,
-            prompt_embeds=prompt_embeds,
-            guidance_scale=args.guidance_scale,
-            extra_step_kwargs=extra_step_kwargs,
-        )
-
-        # Stop-grad and send to the second device
-        _latents = latents.to(devices[1])
-        e_0 = unet_teacher(_latents, t_ddpm.to(devices[1]), encoder_hidden_states=uncond_emb).sample
-
-        e_0 = e_0.detach().to(devices[0])
-
-        # args.concept_scale: s_s in the paper
-        noise_target = e_0
-
-    noise_pred = unet_student(latents, t_ddpm.to(devices[0]), encoder_hidden_states=safety_emb.to(devices[0])).sample
-
-    loss = F.mse_loss(noise_pred, noise_target)
-    
-    return loss
 
 
 def train_unlearn_step(
@@ -621,7 +547,6 @@ def train_unlearn_step(
     t_ddpm_end   = round((1 - int(t_ddim)       / args.num_ddim_steps) * args.num_ddpm_steps)
     t_ddpm = torch.randint(t_ddpm_start, t_ddpm_end, (batch_size,),)
     # print(f"t_ddim: {t_ddim}, t_ddpm: {t_ddpm}")
-
     # Prepare extra kwargs for the scheduler step, since not all schedulers have the same signature
     extra_step_kwargs = prepare_extra_step_kwargs(noise_scheduler, generator, args.eta)
 
@@ -658,8 +583,8 @@ def train_unlearn_step(
     
     return loss
 
-
-def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,train_set=False)
+def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=1,train_set=False):
+    all_losses = []
     for step, batch in enumerate(dataloader):
             latents = vae.encode(batch["pixel_values"].to(vae.device)).latent_dist.sample()
             latents = latents * vae.config.scaling_factor
@@ -668,7 +593,7 @@ def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_en
 
             bsz = latents.shape[0]
             if args.fix_timesteps and not train_set:
-                timesteps = torch.zeros(bsz, dtype=torch.long, device=latents.device) * args.fixed_time_step
+                timesteps = torch.ones(bsz, dtype=torch.long, device=latents.device) * fixed_time_step
             else:
                 timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=latents.device).long()
             
@@ -687,19 +612,19 @@ def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_en
             model_pred = task_unet(noisy_latents, timesteps, encoder_hidden_states, return_dict=False)[0]
             loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
 
-            # loss.backward()
-            scaler.scale(loss).backward()
+            loss.backward()
+            all_losses.append(loss.item())
             
             if train_set == True:
                 if args.max_grad_norm > 0:
                     clip_grad_norm_(task_unet.parameters(), args.max_grad_norm)
-                # task_optimizer.step()
-                #
-                scaler.step(task_optimizer)
-                scaler.update()
+                task_optimizer.step()
                 task_lr_scheduler.step()
                 task_optimizer.zero_grad()
-    return task_unet,task_optimizer,task_lr_scheduler
+    if train_set == False:
+        print(f"timestep: {fixed_time_step}, loss: {np.mean(all_losses)}")
+    return task_unet,task_optimizer,task_lr_scheduler,np.mean(all_losses)
+
 
 
 
@@ -745,8 +670,7 @@ from datasets import load_dataset,load_from_disk
 def data_loader(args,tokenizer,caption_column="text",image_column="image"):
     hrm_dataset = load_dataset("imagefolder", data_dir="./dataset/hrm")
     irt_dataset = load_dataset("imagefolder", data_dir="./dataset/irt")
-    tgt_dataset = load_dataset("imagefolder", data_dir="./dataset//woman")
-    tgt2_dataset = load_dataset("imagefolder", data_dir="./dataset/man")
+    tgt_dataset = load_dataset("imagefolder", data_dir="./dataset/tgt")
 
     from torchvision import transforms
     # Preprocessing the datasets.
@@ -799,9 +723,6 @@ def data_loader(args,tokenizer,caption_column="text",image_column="image"):
     tgt_train_dataset = tgt_dataset["train"].with_transform(preprocess_train)
     tgt_test_dataset = tgt_dataset["test"].with_transform(preprocess_train)
 
-    tgt2_train_dataset = tgt2_dataset["train"].with_transform(preprocess_train)
-    tgt2_test_dataset = tgt2_dataset["test"].with_transform(preprocess_train)
-
 
     # DataLoaders creation:
     hrm_train_dataloader = torch.utils.data.DataLoader(
@@ -849,25 +770,10 @@ def data_loader(args,tokenizer,caption_column="text",image_column="image"):
         num_workers=8,
     )
 
-    tgt2_train_dataloader = torch.utils.data.DataLoader(
-        tgt2_train_dataset,
-        shuffle=True,
-        collate_fn=collate_fn,
-        batch_size=args.train_batch_size,
-        num_workers=8,
-    )
 
-    tgt2_test_dataloader = torch.utils.data.DataLoader(
-        tgt2_test_dataset,
-        collate_fn=collate_fn,
-        batch_size=args.train_batch_size,
-        num_workers=8,
-    )
+    return hrm_train_dataloader,hrm_test_dataloader,irt_train_dataloader,irt_test_dataloader,tgt_train_dataloader,tgt_test_dataloader
 
 
-    return hrm_train_dataloader,hrm_test_dataloader,irt_train_dataloader,irt_test_dataloader,tgt_train_dataloader,tgt_test_dataloader,tgt2_train_dataloader,tgt2_test_dataloader
-
-scaler = torch.amp.GradScaler()
 
 def main():
 
@@ -986,9 +892,9 @@ def main():
     if args.use_wandb:
         wandb.watch(unet_student, log="all")
     
-    # if args.use_fp16:
+    if args.use_fp16:
         # Mixed precision training
-    
+        scaler = torch.cuda.amp.GradScaler()
 
     # Set the number of inference time steps
     ddim_scheduler.set_timesteps(args.num_ddim_steps, devices[1])
@@ -1007,22 +913,8 @@ def main():
             device=devices[1],
         )
     # load data
-    hrm_train_dataloader,hrm_test_dataloader,irt_train_dataloader,irt_test_dataloader,tgt_train_dataloader,tgt_test_dataloader,tgt2_train_dataloader,tgt2_test_dataloader = data_loader(args,tokenizer)
+    hrm_train_dataloader,hrm_test_dataloader,irt_train_dataloader,irt_test_dataloader,tgt_train_dataloader,tgt_test_dataloader = data_loader(args,tokenizer)
     progress_bar = tqdm(range(1, args.num_train_steps+1), desc="Training")
-
-    def collate_fn(examples):
-        pixel_values = torch.stack([example["pixel_values"] for example in examples])
-        pixel_values = pixel_values.to(memory_format=torch.contiguous_format).float()
-        input_ids = torch.stack([example["input_ids"] for example in examples])
-        return {"pixel_values": pixel_values, "input_ids": input_ids}
-
-    from torch.utils.data import DataLoader, Subset
-    def sample_from_data(dataloader,num=30):
-        original_dataset = dataloader.dataset
-        indices = torch.randperm(len(original_dataset))[:num]
-        subset_dataset = Subset(original_dataset, indices)
-        return DataLoader(subset_dataset, batch_size=dataloader.batch_size, shuffle=True, collate_fn=collate_fn,num_workers=8)
-
 
     for step in progress_bar:
 
@@ -1035,9 +927,9 @@ def main():
 
         if args.use_fp16:
             pass
+
         
         else:
-
             task_unet = deepcopy(unet_student)
             names_copy, parameters_copy = gather_parameters(args, task_unet)
             task_optimizer = optim.AdamW(
@@ -1070,62 +962,71 @@ def main():
                 num_training_steps=100,
             )
 
+            if args.fix_timesteps:
+                for fixed_time_step in args.fixed_time_steps:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] += args.gamma1_1*param.grad
+                    task_optimizer.zero_grad()
 
+                for fixed_time_step in args.fixed_time_steps:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] += args.gamma1_2*param.grad
+                    task_optimizer.zero_grad()
+            else:
+                task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                for i, param in enumerate(parameters_copy):
+                    sum_grads[i] += args.gamma1_1*param.grad
+                task_optimizer.zero_grad()
 
-            t_irt_train_dataloader = sample_from_data(irt_train_dataloader)
-            
-            t_tgt_test_dataloader = sample_from_data(tgt_test_dataloader)
-            
-            t_tgt2_test_dataloader = sample_from_data(tgt2_test_dataloader)
-
-
-            unet_student,optimizer,lr_scheduler = train_step(t_irt_train_dataloader,unet_student,optimizer,lr_scheduler,vae,text_encoder,noise_scheduler,args)
-            unet_student,optimizer,lr_scheduler = train_step(t_tgt_test_dataloader,unet_student,optimizer,lr_scheduler,vae,text_encoder,noise_scheduler,args)
-            unet_student,optimizer,lr_scheduler = train_step(t_tgt2_test_dataloader,unet_student,optimizer,lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                for i, param in enumerate(parameters_copy):
+                    sum_grads[i] += args.gamma1_2*param.grad
+                task_optimizer.zero_grad()
 
             for epoch in range(1):
+                
+                task_unet,task_optimizer_full,task_lr_scheduler_full = train_step(hrm_train_dataloader,task_unet,task_optimizer_full,task_lr_scheduler_full,vae,text_encoder,noise_scheduler,args,train_set=True)
+                task_optimizer_full.zero_grad()
 
-                for meta in range(1):
+                if args.fix_timesteps:
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_1*param.grad
+                        task_optimizer.zero_grad()
 
-                    task_optimizer_full.zero_grad()
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_2*param.grad
+                        task_optimizer.zero_grad()
+
+                    for fixed_time_step in args.fixed_time_steps:
+                        task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args,fixed_time_step=fixed_time_step)
+                        for i, param in enumerate(parameters_copy):
+                            sum_grads[i] -= args.gamma2_3*param.grad
+                        task_optimizer.zero_grad()
+
+                else:
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_1*param.grad
                     task_optimizer.zero_grad()
-                    t_hrm_train_dataloader = sample_from_data(hrm_train_dataloader,10)
-                    task_unet,task_optimizer_full,task_lr_scheduler_full = train_step(t_hrm_train_dataloader,task_unet,task_optimizer_full,task_lr_scheduler_full,vae,text_encoder,noise_scheduler,args,train_set=True)
 
-                    task_optimizer_full.zero_grad()
+
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_2*param.grad
                     task_optimizer.zero_grad()
-                t_hrm_test_dataloader = sample_from_data(hrm_test_dataloader,10)
-                task_unet,task_optimizer,task_lr_scheduler = train_step(t_hrm_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
-                for i, param in enumerate(parameters_copy):
-                    sum_grads[i] -= args.gamma1*param.grad
-                task_optimizer.zero_grad()
 
-                task_unet,task_optimizer,task_lr_scheduler = train_step(t_tgt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
-                for i, param in enumerate(parameters_copy):
-                    sum_grads[i] -= args.gamma2*param.grad
-                task_optimizer.zero_grad()
 
-                task_unet,task_optimizer,task_lr_scheduler = train_step(t_tgt2_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
-                for i, param in enumerate(parameters_copy):
-                    sum_grads[i] -= args.gamma2*param.grad
-                task_optimizer.zero_grad()
+                    task_unet,task_optimizer,task_lr_scheduler = train_step(irt_test_dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_encoder,noise_scheduler,args)
+                    for i, param in enumerate(parameters_copy):
+                        sum_grads[i] -= args.gamma2_3*param.grad
+                    task_optimizer.zero_grad()
 
-                with torch.amp.autocast(device_type="cuda"):
-                    meta_loss = train_unlearn_step(
-                        args=args,
-                        prompt="nudity",
-                        removing_prompt="nudity",
-                        generator=gen,
-                        noise_scheduler=noise_scheduler,
-                        ddim_scheduler=ddim_scheduler,
-                        text_encoder=text_encoder,
-                        tokenizer=tokenizer,
-                        unet_teacher=unet_teacher,
-                        unet_student=task_unet,
-                        devices=devices,
-                    )
-                scaler.scale(meta_loss).backward()
-                    # meta_loss.backward()
 
             # Apply accumulated gradients to the main model
             for i, param in enumerate(parameters):
@@ -1135,62 +1036,21 @@ def main():
             if step % args.gradient_accumulation_steps == 0:
                 if args.max_grad_norm > 0:
                     clip_grad_norm_(parameters, args.max_grad_norm)
-                # optimizer.step()
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
                 del sum_grads
                 torch.cuda.empty_cache()
 
-
+        progress_bar.set_description(f"Training: {train_loss.item():.4f} on c_p: {prompt} - c_s: {removing_concept}")
         if args.use_wandb:
             wandb.log({"train/loss": train_loss.item(), "step": step, "train/lr": lr_scheduler.get_last_lr()[0]})
 
+        if (step % args.log_every == 0) and (args.logging_dir is not None):
+            logger.info(f"Step: {step} | Loss: {train_loss.item():.4f} | LR: {lr_scheduler.get_last_lr()[0]:.4e}")
+
         # Validation
         if (step % args.eval_every == 0) and (step >= args.eval_after) and (len(args.validation_prompts) > 0):
-                        
-            task_unet = deepcopy(unet_student)
-
-            names_copy_full, parameters_copy_full = gather_parameters_full(args, task_unet)
-
-            task_optimizer_full = optim.AdamW(
-                parameters_copy_full,
-                lr=args.learning_rate,
-                betas=(args.adam_beta1, args.adam_beta2),
-                eps=args.adam_epsilon,
-                weight_decay=args.weight_decay,
-            )
-            task_lr_scheduler_full: LambdaLR = get_scheduler(
-                name=args.lr_scheduler,
-                optimizer=task_optimizer_full,
-                num_warmup_steps=args.lr_warmup_steps * args.gradient_accumulation_steps,
-                num_training_steps=100,
-            )
-
-            for meta in range(1):
-                task_optimizer_full.zero_grad()
-                task_optimizer.zero_grad()
-                t_hrm_train_dataloader = sample_from_data(hrm_train_dataloader,10)
-                task_unet,task_optimizer_full,task_lr_scheduler_full = train_step(t_hrm_train_dataloader,task_unet,task_optimizer_full,task_lr_scheduler_full,vae,text_encoder,noise_scheduler,args,train_set=True)
-
-                task_optimizer_full.zero_grad()
-                task_optimizer.zero_grad()
-            
-            validate(
-                args=args,
-                vae=vae,
-                text_encoder=text_encoder,
-                tokenizer=tokenizer,
-                unet=task_unet,
-                weight_dtype=vae.dtype,
-                step=step,
-                device=devices[1],
-                prefix="ft-our",
-            )
-            
-            del task_unet,task_optimizer_full,task_lr_scheduler_full
-
             validate(
                 args=args,
                 vae=vae,
@@ -1200,9 +1060,8 @@ def main():
                 weight_dtype=vae.dtype,
                 step=step,
                 device=devices[1],
-                prefix="student",
+                prefix="teacher",
             )
-            
 
             # Save checkpoint
             if step % args.save_every == 0:
