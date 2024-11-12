@@ -623,7 +623,7 @@ def train_step(dataloader,task_unet,task_optimizer,task_lr_scheduler,vae,text_en
                 task_optimizer.zero_grad()
     if train_set == False:
         print(f"timestep: {fixed_time_step}, loss: {np.mean(all_losses)}")
-    return task_unet,task_optimizer,task_lr_scheduler,np.mean(all_losses)
+    return task_unet,task_optimizer,task_lr_scheduler
 
 
 
