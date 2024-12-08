@@ -13,6 +13,6 @@ python ./esd_meta.py \
     --gamma1_2 0.01 \
     --gamma2_1 0.1 \
     --gamma2_1 0.1 \
-    --gamma2_1 0.01 \
-    --fix_timesteps True \
-    --fixed_time_steps 1 2 5 10
+    --gamma2_1 0.01 
+    # --fix_timesteps True \
+    # --fixed_time_steps 1 2 5 10
